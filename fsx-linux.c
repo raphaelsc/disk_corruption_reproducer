@@ -53,8 +53,8 @@
 #define FNAME "ltp-file.bin"
 
 static int file_desc;
-static long long file_max_size = 256 * 1024;
-static long long op_max_size = 64 * 1024;
+static long long file_max_size = 1024 * 1024 * 1024;
+static long long op_max_size = 128 * 1024;
 static long long file_size;
 static int op_write_align = 1;
 static int op_read_align = 1;
@@ -86,7 +86,7 @@ static void op_file_position(
 	long long diff;
 
 	pos->offset = random() % fsize;
-	pos->size = random() % (fsize - pos->offset);
+	pos->size = op_max_size;
 
 	diff = pos->offset % align;
 
@@ -99,6 +99,7 @@ static void op_file_position(
 		pos->size = 1;
 
 	op_align_pages(pos);
+	assert(pos->size <= op_max_size);
 }
 
 static void update_file_size(struct file_pos_t const *pos)
@@ -144,12 +145,12 @@ static int op_read(const struct file_pos_t pos)
 		pos.offset,
 		pos.size);
 
-	memset(temp_buff, 0, file_max_size);
+	memset(temp_buff, 0, op_max_size);
 
 	SAFE_READ(file_desc, temp_buff, pos.size, pos.offset);
 
 	int ret = memory_compare(
-		file_buff + pos.offset,
+		file_buff,
 		temp_buff,
 		pos.offset,
 		pos.size);
@@ -172,7 +173,7 @@ static int op_write(const struct file_pos_t pos)
 	for (long long i = 0; i < pos.size; i++) {
 		data = random() % 10 + 'a';
 
-		file_buff[pos.offset + i] = data;
+		file_buff[i] = data;
 		temp_buff[i] = data;
 	}
 
@@ -196,8 +197,8 @@ static void run(void)
 
 	file_size = 0;
 
-	memset(file_buff, 0, file_max_size);
-	memset(temp_buff, 0, file_max_size);
+	memset(file_buff, 0, op_max_size);
+	memset(temp_buff, 0, op_max_size);
 
 	SAFE_FTRUNCATE(file_desc, 0);
 
@@ -230,8 +231,8 @@ static void setup(void)
 
 	file_desc = SAFE_OPEN(FNAME, O_RDWR | O_CREAT | O_DIRECT, 0666);
 
-	file_buff = SAFE_MALLOC(file_max_size);
-	temp_buff = SAFE_MALLOC(file_max_size);
+	file_buff = SAFE_MALLOC(op_max_size);
+	temp_buff = SAFE_MALLOC(op_max_size);
 }
 
 static void cleanup(void)
