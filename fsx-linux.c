@@ -24,7 +24,33 @@
  */
 
 #include <stdlib.h>
-#include "tst_test.h"
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <limits.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <string.h>
+#include <assert.h>
+#include <time.h>
+#include <errno.h>
+
+#define TINFO 0
+#define TBROK 0
+
+#define tst_brk(ttype, arg_fmt, ...) printf(arg_fmt"\n", ##__VA_ARGS__)
+#define tst_res(ttype, arg_fmt, ...) printf(arg_fmt"\n", ##__VA_ARGS__)
+
+#define SAFE_OPEN open
+#define SAFE_FTRUNCATE ftruncate
+#define SAFE_CLOSE close
+#define SAFE_LSEEK lseek
+#define SAFE_MALLOC(...) aligned_alloc(4096, ##__VA_ARGS__)
+#define SAFE_READ read
+#define SAFE_WRITE write
+#define SAFE_MMAP mmap
+#define SAFE_MUNMAP munmap
+#define SAFE_MSYNC
 
 #define FNAME "ltp-file.bin"
 
@@ -37,13 +63,6 @@ enum {
 	/* keep counter here */
 	OP_TOTAL,
 };
-
-static char *str_file_max_size;
-static char *str_op_max_size;
-static char *str_op_nums;
-static char *str_op_write_align;
-static char *str_op_read_align;
-static char *str_op_trunc_align;
 
 static int file_desc;
 static long long file_max_size = 256 * 1024;
@@ -143,7 +162,7 @@ static int op_read(void)
 	memset(temp_buff, 0, file_max_size);
 
 	SAFE_LSEEK(file_desc, (off_t)pos.offset, SEEK_SET);
-	SAFE_READ(0, file_desc, temp_buff, pos.size);
+	SAFE_READ(file_desc, temp_buff, pos.size);
 
 	int ret = memory_compare(
 		file_buff + pos.offset,
@@ -182,7 +201,7 @@ static int op_write(void)
 		pos.size);
 
 	SAFE_LSEEK(file_desc, (off_t)pos.offset, SEEK_SET);
-	SAFE_WRITE(SAFE_WRITE_ALL, file_desc, temp_buff, pos.size);
+	SAFE_WRITE(file_desc, temp_buff, pos.size);
 
 	update_file_size(&pos);
 
@@ -333,24 +352,6 @@ static void run(void)
 
 static void setup(void)
 {
-	if (tst_parse_filesize(str_file_max_size, &file_max_size, 1, LLONG_MAX))
-		tst_brk(TBROK, "Invalid file size '%s'", str_file_max_size);
-
-	if (tst_parse_filesize(str_op_max_size, &op_max_size, 1, LLONG_MAX))
-		tst_brk(TBROK, "Invalid maximum size for single operation '%s'", str_op_max_size);
-
-	if (tst_parse_int(str_op_nums, &op_nums, 1, INT_MAX))
-		tst_brk(TBROK, "Invalid number of operations '%s'", str_op_nums);
-
-	if (tst_parse_int(str_op_write_align, &op_write_align, 1, INT_MAX))
-		tst_brk(TBROK, "Invalid memory write alignment factor '%s'", str_op_write_align);
-
-	if (tst_parse_int(str_op_read_align, &op_read_align, 1, INT_MAX))
-		tst_brk(TBROK, "Invalid memory read alignment factor '%s'", str_op_read_align);
-
-	if (tst_parse_int(str_op_trunc_align, &op_trunc_align, 1, INT_MAX))
-		tst_brk(TBROK, "Invalid memory truncate alignment factor '%s'", str_op_trunc_align);
-
 	page_size = (int)sysconf(_SC_PAGESIZE);
 
 	srandom(time(NULL));
@@ -373,18 +374,10 @@ static void cleanup(void)
 		SAFE_CLOSE(file_desc);
 }
 
-static struct tst_test test = {
-	.needs_tmpdir = 1,
-	.setup = setup,
-	.cleanup = cleanup,
-	.test_all = run,
-	.options = (struct tst_option[]) {
-		{ "l:", &str_file_max_size, "Maximum size in MB of the test file(s) (default 262144)" },
-		{ "o:", &str_op_max_size, "Maximum size for single operation (default 65536)" },
-		{ "N:", &str_op_nums, "Total # operations to do (default 1000)" },
-		{ "w:", &str_op_write_align, "Write memory page alignment (default 1)" },
-		{ "r:", &str_op_read_align, "Read memory page alignment (default 1)" },
-		{ "t:", &str_op_trunc_align, "Truncate memory page alignment (default 1)" },
-		{},
-	},
-};
+int main(int argc, char** argv) {
+	setup();
+	run();
+	cleanup();
+
+	return 0;
+}
