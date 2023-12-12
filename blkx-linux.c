@@ -10,6 +10,8 @@
  *	Joe Sokol, Pat Dirks, Clark Warner, Guy Harris
  *
  * Copyright (C) 2023 SUSE LLC Andrea Cervesato <andrea.cervesato@suse.com>
+ *
+ * Copyright (C) 2023 ScyllaDB inc. Raphael S. Carvalho <raphaelsc@scylladb.com>
  */
 
 /*\
@@ -35,6 +37,9 @@
 #include <assert.h>
 #include <time.h>
 #include <errno.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <linux/fs.h>
 
 #define TINFO 0
 #define TBROK 0
@@ -50,16 +55,20 @@
 #define SAFE_READ pread
 #define SAFE_WRITE pwrite
 
-#define FNAME "ltp-file.bin"
+const char* FNAME = "/dev/null";
+
+// That's the upper bound that blkx can write into, that's to avoid operating on the area reserved for BLKDISCARD threads, that will run in parallel to it.
+#define UPPER_BOUND_FOR_BLKX_IN_GB 10UL
 
 static int file_desc;
 static long long file_max_size = 1024 * 1024 * 1024;
 static long long op_max_size = 128 * 1024;
+static long long base_offset = 0;
 static long long file_size;
 static int op_write_align = 1;
 static int op_read_align = 1;
 static int op_trunc_align = 1;
-static int op_nums = 1000;
+static int op_nums = 10000;
 static int page_size;
 
 static char *file_buff;
@@ -85,7 +94,7 @@ static void op_file_position(
 {
 	long long diff;
 
-	pos->offset = random() % fsize;
+	pos->offset = random() % (fsize - op_max_size) + base_offset;
 	pos->size = op_max_size;
 
 	diff = pos->offset % align;
@@ -100,6 +109,7 @@ static void op_file_position(
 
 	op_align_pages(pos);
 	assert(pos->size <= op_max_size);
+	assert(pos->offset + op_max_size <= file_max_size + base_offset);
 }
 
 static void update_file_size(struct file_pos_t const *pos)
@@ -119,6 +129,7 @@ static int memory_compare(
 {
 	int diff;
 
+	assert(size <= op_max_size);
 	for (long long i = 0; i < size; i++) {
 		diff = a[i] - b[i];
 		if (diff) {
@@ -163,13 +174,13 @@ static int op_read(const struct file_pos_t pos)
 
 static int op_write(const struct file_pos_t pos)
 {
-	if (file_size >= file_max_size) {
-		tst_res(TINFO, "Skipping max size write");
-		return 0;
+	if (file_size >= file_max_size + base_offset) {
+		assert(0);
 	}
 
 	char data;
 
+	assert(pos.size <= op_max_size);
 	for (long long i = 0; i < pos.size; i++) {
 		data = random() % 10 + 'a';
 
@@ -206,6 +217,10 @@ static void run(void)
 		struct file_pos_t pos;
 		op_file_position(file_max_size, op_trunc_align, &pos);
 
+		assert(pos.size <= op_max_size);
+		assert(pos.offset >= base_offset);
+		assert(pos.offset + pos.size < (UPPER_BOUND_FOR_BLKX_IN_GB*1024UL*1024*1024));
+
 		ret = op_write(pos);
 		if (ret == -1) {
 			break;
@@ -223,13 +238,35 @@ static void run(void)
 		tst_res(TPASS, "All file operations succeed");
 }
 
+ #define max(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a > _b ? _a : _b; })
+
 static void setup(void)
 {
-	page_size = (int)sysconf(_SC_PAGESIZE);
+	struct stat st;
+	int r = fstat(file_desc, &st);
+	if (r == -1) {
+		exit(1);
+	}
+	if (!S_ISBLK(st.st_mode)) {
+		printf("Not block device\n");
+	}
+
+	int ret = ioctl(file_desc, BLKBSZGET, &page_size);
+	if (ret == -1) {
+		page_size = max(st.st_blksize, (int)sysconf(_SC_PAGESIZE));
+	}
+	printf("Block size: %ld\n", page_size);
 
 	srandom(time(NULL));
 
-	file_desc = SAFE_OPEN(FNAME, O_RDWR | O_CREAT | O_DIRECT, 0666);
+	file_desc = SAFE_OPEN(FNAME, O_RDWR | O_DIRECT);
+	if (file_desc == -1) {
+		printf("Unable to open file %s", strerror(errno));
+		exit(1);
+	}
 
 	file_buff = SAFE_MALLOC(op_max_size);
 	temp_buff = SAFE_MALLOC(op_max_size);
@@ -248,6 +285,22 @@ static void cleanup(void)
 }
 
 int main(int argc, char** argv) {
+	if (argc < 2) {
+		printf("usage: %s /path/to/device [offset_in_GB]\n", argv[0]);
+		return 0;
+	}
+	FNAME = argv[1];
+	printf("Block device: %s\n", FNAME);
+
+	if (argc == 3) {
+		long long offset_in_gb = atoi(argv[2]);
+		if (offset_in_gb >= UPPER_BOUND_FOR_BLKX_IN_GB) {
+			printf("Unable to operate on area reserved for BLKDISCARD, which is above %dGB\n", UPPER_BOUND_FOR_BLKX_IN_GB);
+			exit(1);
+		}
+		base_offset = offset_in_gb * 1024 * 1024 * 1024ULL;
+	}
+
 	setup();
 	run();
 	cleanup();
