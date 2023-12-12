@@ -28,7 +28,6 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <limits.h>
-#include <sys/mman.h>
 #include <fcntl.h>
 #include <string.h>
 #include <assert.h>
@@ -48,9 +47,6 @@
 #define SAFE_MALLOC(...) aligned_alloc(4096, ##__VA_ARGS__)
 #define SAFE_READ read
 #define SAFE_WRITE write
-#define SAFE_MMAP mmap
-#define SAFE_MUNMAP munmap
-#define SAFE_MSYNC
 
 #define FNAME "ltp-file.bin"
 
@@ -224,85 +220,6 @@ static int op_truncate(void)
 	return 1;
 }
 
-static int op_map_read(void)
-{
-	if (!file_size) {
-		tst_res(TINFO, "Skipping zero size read");
-		return 0;
-	}
-
-	struct file_pos_t pos;
-	char *addr;
-
-	op_file_position(file_size, op_read_align, &pos);
-	op_align_pages(&pos);
-
-	tst_res(TINFO,
-		"Map reading at offset=%llu, size=%llu",
-		pos.offset,
-		pos.size);
-
-	addr = SAFE_MMAP(
-		0, pos.size,
-		PROT_READ,
-		MAP_FILE | MAP_SHARED,
-		file_desc,
-		(off_t)pos.offset);
-
-	memcpy(file_buff + pos.offset, addr, pos.size);
-
-	int ret = memory_compare(
-		addr,
-		file_buff + pos.offset,
-		pos.offset,
-		pos.size);
-
-	SAFE_MUNMAP(addr, pos.size);
-	if (ret)
-		return -1;
-
-	return 1;
-}
-
-static int op_map_write(void)
-{
-	if (file_size >= file_max_size) {
-		tst_res(TINFO, "Skipping max size write");
-		return 0;
-	}
-
-	struct file_pos_t pos;
-	char *addr;
-
-	op_file_position(file_max_size, op_write_align, &pos);
-	op_align_pages(&pos);
-
-	if (file_size < pos.offset + pos.size)
-		SAFE_FTRUNCATE(file_desc, pos.offset + pos.size);
-
-	tst_res(TINFO,
-		"Map writing at offset=%llu, size=%llu",
-		pos.offset,
-		pos.size);
-
-	for (long long i = 0; i < pos.size; i++)
-		file_buff[pos.offset + i] = random() % 10 + 'l';
-
-	addr = SAFE_MMAP(
-		0, pos.size,
-		PROT_READ | PROT_WRITE,
-		MAP_FILE | MAP_SHARED,
-		file_desc,
-		(off_t)pos.offset);
-
-	memcpy(addr, file_buff + pos.offset, pos.size);
-	SAFE_MSYNC(addr, pos.size, MS_SYNC);
-	SAFE_MUNMAP(addr, pos.size);
-	update_file_size(&pos);
-
-	return 1;
-}
-
 static void run(void)
 {
 	int op;
@@ -322,12 +239,6 @@ static void run(void)
 		switch (op) {
 		case OP_WRITE:
 			ret = op_write();
-			break;
-		case OP_MAPREAD:
-			ret = op_map_read();
-			break;
-		case OP_MAPWRITE:
-			ret = op_map_write();
 			break;
 		case OP_TRUNCATE:
 			ret = op_truncate();
