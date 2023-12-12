@@ -23,6 +23,8 @@
  * have been completed.
  */
 
+#define _GNU_SOURCE
+
 #include <stdlib.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -45,8 +47,8 @@
 #define SAFE_CLOSE close
 #define SAFE_LSEEK lseek
 #define SAFE_MALLOC(...) aligned_alloc(4096, ##__VA_ARGS__)
-#define SAFE_READ read
-#define SAFE_WRITE write
+#define SAFE_READ pread
+#define SAFE_WRITE pwrite
 
 #define FNAME "ltp-file.bin"
 
@@ -80,12 +82,10 @@ struct file_pos_t {
 
 static void op_align_pages(struct file_pos_t *pos)
 {
-	long long pg_offset;
+	long long pg_mask = page_size - 1;
 
-	pg_offset = pos->offset % page_size;
-
-	pos->offset -= pg_offset;
-	pos->size += pg_offset;
+	pos->offset = pos->offset & ~(pg_mask);
+	pos->size = (pos->size + page_size - 1) & ~(pg_mask);
 }
 
 static void op_file_position(
@@ -107,6 +107,8 @@ static void op_file_position(
 
 	if (!pos->size)
 		pos->size = 1;
+
+	op_align_pages(pos);
 }
 
 static void update_file_size(struct file_pos_t const *pos)
@@ -157,8 +159,7 @@ static int op_read(void)
 
 	memset(temp_buff, 0, file_max_size);
 
-	SAFE_LSEEK(file_desc, (off_t)pos.offset, SEEK_SET);
-	SAFE_READ(file_desc, temp_buff, pos.size);
+	SAFE_READ(file_desc, temp_buff, pos.size, pos.offset);
 
 	int ret = memory_compare(
 		file_buff + pos.offset,
@@ -196,8 +197,7 @@ static int op_write(void)
 		pos.offset,
 		pos.size);
 
-	SAFE_LSEEK(file_desc, (off_t)pos.offset, SEEK_SET);
-	SAFE_WRITE(file_desc, temp_buff, pos.size);
+	SAFE_WRITE(file_desc, temp_buff, pos.size, pos.offset);
 
 	update_file_size(&pos);
 
@@ -267,7 +267,7 @@ static void setup(void)
 
 	srandom(time(NULL));
 
-	file_desc = SAFE_OPEN(FNAME, O_RDWR | O_CREAT, 0666);
+	file_desc = SAFE_OPEN(FNAME, O_RDWR | O_CREAT | O_DIRECT, 0666);
 
 	file_buff = SAFE_MALLOC(file_max_size);
 	temp_buff = SAFE_MALLOC(file_max_size);
