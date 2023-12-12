@@ -52,16 +52,6 @@
 
 #define FNAME "ltp-file.bin"
 
-enum {
-	OP_READ = 0,
-	OP_WRITE,
-	OP_TRUNCATE,
-	OP_MAPREAD,
-	OP_MAPWRITE,
-	/* keep counter here */
-	OP_TOTAL,
-};
-
 static int file_desc;
 static long long file_max_size = 256 * 1024;
 static long long op_max_size = 64 * 1024;
@@ -141,16 +131,13 @@ static int memory_compare(
 	return diff;
 }
 
-static int op_read(void)
+static int op_read(const struct file_pos_t pos)
 {
 	if (!file_size) {
 		tst_res(TINFO, "Skipping zero size read");
 		return 0;
 	}
 
-	struct file_pos_t pos;
-
-	op_file_position(file_size, op_read_align, &pos);
 
 	tst_res(TINFO,
 		"Reading at offset=%llu, size=%llu",
@@ -173,17 +160,14 @@ static int op_read(void)
 	return 1;
 }
 
-static int op_write(void)
+static int op_write(const struct file_pos_t pos)
 {
 	if (file_size >= file_max_size) {
 		tst_res(TINFO, "Skipping max size write");
 		return 0;
 	}
 
-	struct file_pos_t pos;
 	char data;
-
-	op_file_position(file_max_size, op_write_align, &pos);
 
 	for (long long i = 0; i < pos.size; i++) {
 		data = random() % 10 + 'a';
@@ -204,22 +188,6 @@ static int op_write(void)
 	return 1;
 }
 
-static int op_truncate(void)
-{
-	struct file_pos_t pos;
-
-	op_file_position(file_max_size, op_trunc_align, &pos);
-
-	file_size = pos.offset + pos.size;
-
-	tst_res(TINFO, "Truncating to %llu", file_size);
-
-	SAFE_FTRUNCATE(file_desc, file_size);
-	memset(file_buff + file_size, 0, file_max_size - file_size);
-
-	return 1;
-}
-
 static void run(void)
 {
 	int op;
@@ -234,24 +202,17 @@ static void run(void)
 	SAFE_FTRUNCATE(file_desc, 0);
 
 	while (counter < op_nums) {
-		op = random() % OP_TOTAL;
+		struct file_pos_t pos;
+		op_file_position(file_max_size, op_trunc_align, &pos);
 
-		switch (op) {
-		case OP_WRITE:
-			ret = op_write();
+		ret = op_write(pos);
+		if (ret == -1) {
 			break;
-		case OP_TRUNCATE:
-			ret = op_truncate();
+		}
+		ret = op_read(pos);
+		if (ret == -1) {
 			break;
-		case OP_READ:
-		default:
-			ret = op_read();
-			break;
-		};
-
-		if (ret == -1)
-			break;
-
+		}
 		counter += ret;
 	}
 
