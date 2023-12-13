@@ -232,9 +232,10 @@ static void run(void)
 		counter += ret;
 	}
 
-	if (counter != op_nums)
+	if (counter != op_nums) {
 		tst_brk(TFAIL, "Some file operations failed");
-	else
+		exit(1);
+	} else
 		tst_res(TPASS, "All file operations succeed");
 }
 
